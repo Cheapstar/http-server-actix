@@ -56,11 +56,11 @@ async fn gen_keypair()-> impl Responder {
         secret:secretkey_bs
     }}; 
 
-    HttpResponse::Ok().body(format!("{}", serde_json::to_string(&response).unwrap()))
+    HttpResponse::Ok().json(&response)
 }
 
 #[post("/token/create")]
-async fn generate_instruction(req: actix_web::web::Json<MintRequest>) -> impl Responder {
+async fn generate_token(req: actix_web::web::Json<MintRequest>) -> impl Responder {
     let mint_pubkey: Pubkey = match bs58::decode(&req.mint).into_vec() {
         Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
         Err(_) => return HttpResponse::BadRequest().body("Invalid mint pubkey"),
@@ -102,7 +102,7 @@ async fn generate_instruction(req: actix_web::web::Json<MintRequest>) -> impl Re
         },
     };
 
-    HttpResponse::Ok().json(serde_json::to_string(&response).unwrap())
+    HttpResponse::Ok().json(&response)
 }
 
 
@@ -117,6 +117,7 @@ async fn main()->std::io::Result<()> {
         App::new()
             .service(hello)
             .service(gen_keypair)
+            .service(generate_token)
 
     })
         .bind(("0.0.0.0", port))?
