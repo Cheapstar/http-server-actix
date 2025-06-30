@@ -321,7 +321,7 @@ async fn main()->std::io::Result<()> {
     .service(sign_message) 
 
     })
-.bind("0.0.0.0:3000")?
+.bind("0.0.0.0:8080")?
 .run()
        .await
 }
