@@ -1862,6 +1862,7 @@ name = "http-server-actix"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "base64 0.21.7",
  "serde",
  "serde_json",
  "solana-client",

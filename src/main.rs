@@ -1,8 +1,11 @@
 
 use actix_web::{get, post, App, HttpResponse, HttpServer, Responder};
 use serde::{Deserialize, Serialize};
-use solana_sdk::{bs58, signature::Keypair, signer::Signer};
-use spl_token::{instruction::initialize_mint, solana_program::{instruction::Instruction, pubkey::Pubkey}};
+use solana_sdk::{bs58, signature::{Keypair, Signature}, signer::Signer};
+use spl_token::{instruction::{initialize_mint, mint_to}, solana_program::{instruction::Instruction, pubkey::Pubkey}};
+use base64::{engine::general_purpose, Engine as _};
+
+
 
 #[derive(serde::Serialize)]
 #[serde(untagged)]
@@ -45,6 +48,27 @@ struct InstructionData {
     instruction_data: String,
 }
 
+#[derive(Deserialize)]
+struct MintToRequest {
+    mint: String,
+    destination: String,
+    authority: String,
+    amount: u64,
+}
+#[derive(Deserialize)]
+struct SignMessageRequest {
+    message: String,
+    secret: String, // base58-encoded secret key (64 bytes)
+}
+
+#[derive(Serialize)]
+struct SignedMessageResponse {
+    signature: String,
+    public_key: String,
+    message: String,
+}
+
+
 #[post("/keypair")]
 async fn gen_keypair()-> impl Responder {
 
@@ -56,6 +80,7 @@ async fn gen_keypair()-> impl Responder {
         secret:secretkey_bs
     }}; 
 
+    println!("What is happening");
     HttpResponse::Ok().json(&response)
 }
 
@@ -63,12 +88,12 @@ async fn gen_keypair()-> impl Responder {
 async fn generate_token(req: actix_web::web::Json<MintRequest>) -> impl Responder {
     let mint_pubkey: Pubkey = match bs58::decode(&req.mint).into_vec() {
         Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
-        Err(_) => return HttpResponse::BadRequest().body("Invalid mint pubkey"),
+        Err(_) => return HttpResponse::BadRequest().json(ApiResponse::<()>::Error { success: false, error: "Invalid pub key".to_string() }),
     };
 
     let authority_pubkey: Pubkey = match bs58::decode(&req.mintAuthority).into_vec() {
         Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
-        Err(_) => return HttpResponse::BadRequest().body("Invalid authority pubkey"),
+        Err(_) => return HttpResponse::BadRequest().json(ApiResponse::<()>::Error { success: false, error: "Invalid pub key".to_string() }),
     };
 
     let ix: Instruction = initialize_mint(
@@ -90,9 +115,8 @@ async fn generate_token(req: actix_web::web::Json<MintRequest>) -> impl Responde
         })
         .collect();
 
-    let instruction_data = bs58::encode(ix.data).into_string();
+    let instruction_data = general_purpose::STANDARD.encode(ix.data);
 
-    // Wrap response
     let response = ApiResponse::Success {
         success: true,
         data: InstructionData {
@@ -106,22 +130,132 @@ async fn generate_token(req: actix_web::web::Json<MintRequest>) -> impl Responde
 }
 
 
+#[post("/token/mint")]
+async fn mint_token(req: actix_web::web::Json<MintToRequest>) -> impl Responder {
+    let mint = match bs58::decode(&req.mint).into_vec() {
+        Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
+        Err(_) => return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+            success: false,
+            error: "Invalid mint pubkey".to_string(),
+        }),
+    };
+
+    let destination = match bs58::decode(&req.destination).into_vec() {
+        Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
+        Err(_) => return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+            success: false,
+            error: "Invalid destination pubkey".to_string(),
+        }),
+    };
+
+    let authority = match bs58::decode(&req.authority).into_vec() {
+        Ok(bytes) => Pubkey::try_from(bytes.as_slice()).unwrap(),
+        Err(_) => return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+            success: false,
+            error: "Invalid authority pubkey".to_string(),
+        }),
+    };
+
+    let ix = mint_to(
+        &spl_token::ID,
+        &mint,
+        &destination,
+        &authority,
+        &[], // No multisig signers
+        req.amount,
+    ).unwrap();
+
+    let accounts: Vec<AccountMetaInfo> = ix.accounts
+        .into_iter()
+        .map(|a| AccountMetaInfo {
+            pubkey: a.pubkey.to_string(),
+            is_signer: a.is_signer,
+            is_writable: a.is_writable,
+        })
+        .collect();
+
+    let instruction_data = general_purpose::STANDARD.encode(ix.data);
+
+    let response = ApiResponse::Success {
+        success: true,
+        data: InstructionData {
+            program_id: ix.program_id.to_string(),
+            accounts,
+            instruction_data,
+        },
+    };
+
+    HttpResponse::Ok().json(&response)
+}
+
+
+#[post("/message/sign")]
+async fn sign_message(req: actix_web::web::Json<SignMessageRequest>) -> impl Responder {
+    if req.message.is_empty() || req.secret.is_empty() {
+        return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+            success: false,
+            error: "Missing required fields".to_string(),
+        });
+    }
+
+    let secret_bytes = match bs58::decode(&req.secret).into_vec() {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+                success: false,
+                error: "Invalid base58-encoded secret".to_string(),
+            });
+        }
+    };
+
+    // Expecting 64-byte secret key
+    if secret_bytes.len() != 64 {
+        return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+            success: false,
+            error: "Secret key must be 64 bytes (base58 encoded)".to_string(),
+        });
+    }
+
+    let keypair = match Keypair::from_bytes(&secret_bytes) {
+        Ok(kp) => kp,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(ApiResponse::<()>::Error {
+                success: false,
+                error: "Failed to parse keypair from secret".to_string(),
+            });
+        }
+    };
+
+    let signature: Signature = keypair.sign_message(req.message.as_bytes());
+
+    let response = ApiResponse::Success {
+        success: true,
+        data: SignedMessageResponse {
+            signature: general_purpose::STANDARD.encode(signature.as_ref()),
+            public_key: bs58::encode(keypair.pubkey().to_bytes()).into_string(),
+            message: req.message.clone(),
+        },
+    };
+
+    HttpResponse::Ok().json(&response)
+}
+
+
+
 #[actix_web::main]
 async fn main()->std::io::Result<()> {
-        let port = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(8080);
+
 
     HttpServer::new(|| {
         App::new()
-            .service(hello)
-            .service(gen_keypair)
-            .service(generate_token)
+    .service(gen_keypair)
+    .service(generate_token)
+    .service(mint_token)
+    .service(sign_message) 
 
     })
-        .bind(("0.0.0.0", port))?
-       .run()
+.bind("127.0.0.1:8080")?
+.run()
        .await
 }
 
