@@ -1,0 +1,9 @@
+[package]
+name = "http-server-actix"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.11.0"
+solana-client = "1.18.11"
+solana-sdk = "1.18.11"
