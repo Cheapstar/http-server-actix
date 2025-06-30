@@ -1,8 +1,18 @@
-use std::{fmt::format, str::FromStr};
 
-use actix_web::{get, main, web, App, HttpResponse, HttpServer, Responder};
-use solana_client::rpc_client::RpcClient;
-use solana_sdk::{commitment_config::CommitmentConfig, native_token::LAMPORTS_PER_SOL, pubkey::Pubkey};
+use actix_web::{get, post, App, HttpResponse, HttpServer, Responder};
+use solana_sdk::{bs58, signature::Keypair, signer::Signer};
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+pub enum ApiResponse<T> {
+    Success { success: bool, data: T },
+    Error { success: bool, error: String },
+}
+#[derive(serde::Serialize)]
+struct KeypairResponse {
+    pubkey: String,
+    secret: String,
+}
 
 
 #[get("/")]
@@ -10,52 +20,27 @@ async fn hello() -> impl Responder {
     HttpResponse::Ok().body("Hello world!")
 }
 
-#[get("/balance")]
-async fn get_balance()->impl Responder {
+#[post("/keypair")]
+async fn gen_keypair()-> impl Responder {
 
-    let result = web::block(move || {
+    let keypair = Keypair::new();
+    let pubkey_bs = bs58::encode(keypair.pubkey().to_bytes()).into_string();
+    let secretkey_bs = bs58::encode(keypair.secret().to_bytes()).into_string();
+    let response = ApiResponse::Success { success: true, data: KeypairResponse{
+        pubkey:pubkey_bs,
+        secret:secretkey_bs
+    }}; 
 
-        let client =  RpcClient::new_with_commitment(
-            String::from("https://api.devnet.solana.com/")
-            , CommitmentConfig::confirmed());
-            
-            let pubkey = Pubkey::from_str("4L4EPzFQQi5mGXDXUY88DHurX6ukm7Nm5AGpEjEqSocH").unwrap();
-            let balance = client.get_balance(&pubkey).unwrap();
-
-            balance
-        }).await;
-    
-    match result {
-        Ok(balance) => HttpResponse::Ok().body(format!("Balance: {} SOL", balance)),
-        Err(e) => HttpResponse::Ok().body(format!("Error Occured {}",e))
-    }
+    HttpResponse::Ok().body(format!("{}", serde_json::to_string(&response).unwrap()))
 }
 
-#[get("/airdrop")]
-async fn airdrop()->impl Responder {
-    let result = web::block(move|| {
+#[post("/token/create")]
+async fn create_token()->impl Responder{
 
-        let client =  RpcClient::new_with_commitment(
-            String::from("https://api.devnet.solana.com/")
-            , CommitmentConfig::confirmed());
-            
-            let receiver = Pubkey::from_str("4L4EPzFQQi5mGXDXUY88DHurX6ukm7Nm5AGpEjEqSocH").unwrap();
-            let lamports = 1*LAMPORTS_PER_SOL;
-            let transaction_signature = client.request_airdrop(&receiver, lamports).unwrap();
-            
-                loop {
-                    if client.confirm_transaction(&transaction_signature).unwrap() {
-                        break;
-                    }
-                }
+        HttpResponse::Ok().body(format!("{}", serde_json::to_string(&response).unwrap()))
 
-        }).await;
-
-            match result {
-        Ok(()) => HttpResponse::Ok().body(format!("Sol have been airdropped")),
-        Err(e) => HttpResponse::Ok().body(format!("Error Occured {}",e))
-    }
 }
+
 
 #[actix_web::main]
 async fn main()->std::io::Result<()> {
@@ -67,8 +52,7 @@ async fn main()->std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .service(hello)
-            .service(get_balance)
-            .service(airdrop)
+            .service(gen_keypair)
 
     })
         .bind(("0.0.0.0", port))?
