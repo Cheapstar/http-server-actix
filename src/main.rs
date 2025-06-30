@@ -258,8 +258,7 @@ async fn sign_message(req: actix_web::web::Json<SignMessageRequest>) -> impl Res
 
 #[post("/message/verify")]
 async fn verify_message(req: actix_web::web::Json<VerifyMessageRequest>) -> impl Responder {
-    // Decode the signature from base64
-    let sig_bytes = match base64::decode(&req.signature) {
+    let sig_bytes = match general_purpose::STANDARD.decode(&req.signature) {
         Ok(bytes) => bytes,
         Err(_) => {
             return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
@@ -279,7 +278,6 @@ async fn verify_message(req: actix_web::web::Json<VerifyMessageRequest>) -> impl
         }
     };
 
-    // Decode the public key from base58
     let pubkey = match bs58::decode(&req.pubkey).into_vec() {
         Ok(bytes) => match Pubkey::try_from(bytes.as_slice()) {
             Ok(pk) => pk,
@@ -323,7 +321,7 @@ async fn main()->std::io::Result<()> {
     .service(sign_message) 
 
     })
-.bind("0.0.0.0:8080")?
+.bind("0.0.0.0:3000")?
 .run()
        .await
 }
