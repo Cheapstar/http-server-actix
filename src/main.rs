@@ -68,6 +68,21 @@ struct SignedMessageResponse {
     message: String,
 }
 
+#[derive(Deserialize)]
+struct VerifyMessageRequest {
+    message: String,
+    signature: String, // base64-encoded
+    pubkey: String,    // base58-encoded
+}
+
+#[derive(Serialize)]
+struct VerifyMessageResponse {
+    valid: bool,
+    message: String,
+    pubkey: String,
+}
+
+
 
 #[post("/keypair")]
 async fn gen_keypair()-> impl Responder {
@@ -240,6 +255,60 @@ async fn sign_message(req: actix_web::web::Json<SignMessageRequest>) -> impl Res
     HttpResponse::Ok().json(&response)
 }
 
+
+#[post("/message/verify")]
+async fn verify_message(req: actix_web::web::Json<VerifyMessageRequest>) -> impl Responder {
+    // Decode the signature from base64
+    let sig_bytes = match base64::decode(&req.signature) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+                success: false,
+                error: "Invalid base64-encoded signature".to_string(),
+            });
+        }
+    };
+
+    let signature = match Signature::try_from(sig_bytes.as_slice()) {
+        Ok(sig) => sig,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+                success: false,
+                error: "Invalid signature format".to_string(),
+            });
+        }
+    };
+
+    // Decode the public key from base58
+    let pubkey = match bs58::decode(&req.pubkey).into_vec() {
+        Ok(bytes) => match Pubkey::try_from(bytes.as_slice()) {
+            Ok(pk) => pk,
+            Err(_) => {
+                return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+                    success: false,
+                    error: "Invalid public key".to_string(),
+                });
+            }
+        },
+        Err(_) => {
+            return HttpResponse::BadRequest().json(ApiResponse::<()>::Error {
+                success: false,
+                error: "Invalid base58-encoded public key".to_string(),
+            });
+        }
+    };
+
+    let valid = signature.verify(pubkey.as_ref(), req.message.as_bytes());
+
+    HttpResponse::Ok().json(ApiResponse::Success {
+        success: true,
+        data: VerifyMessageResponse {
+            valid,
+            message: req.message.clone(),
+            pubkey: req.pubkey.clone(),
+        },
+    })
+}
 
 
 #[actix_web::main]
